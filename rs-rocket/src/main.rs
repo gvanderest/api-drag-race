@@ -14,33 +14,66 @@ use rocket::{
     State,
 };
 
+#[derive(Responder)]
+enum CreateAccountResponse {
+    #[response(status = 200)]
+    Success(Json<Account>),
+}
+
 #[post("/accounts", data = "<account>")]
-async fn create_account(account: Json<Account>, db: &State<Database>) -> Option<Json<Account>> {
+async fn create_account(account: Json<Account>, db: &State<Database>) -> CreateAccountResponse {
     let mut account = account.into_inner();
 
     account.id = None;
 
     let result = db.accounts.insert_one(&account, None).await.unwrap();
 
-    Some(Json(Account {
+    CreateAccountResponse::Success(Json(Account {
         id: Some(result.inserted_id.as_object_id().unwrap()),
         ..account
     }))
 }
 
+#[derive(Serialize, Deserialize)]
+struct ErrorResponse {
+    error_code: String,
+    message: String,
+}
+
+#[derive(Responder)]
+enum ReadAccountResponse {
+    #[response(status = 200)]
+    Success(Json<Account>),
+    #[response(status = 404)]
+    NotFound(Json<ErrorResponse>),
+}
+
 #[get("/account/<id>")]
-async fn read_account(id: &str, db: &State<Database>) -> Option<Json<Account>> {
+async fn read_account(id: &str, db: &State<Database>) -> ReadAccountResponse {
     let id_object_result = ObjectId::from_str(id);
 
     match id_object_result {
-        Err(_) => None,
+        Err(_) => ReadAccountResponse::NotFound(Json(ErrorResponse {
+            error_code: "NOT_FOUND".to_string(),
+            message: "The requested account could not be found".to_string(),
+        })),
         Ok(id_object) => {
             let filter = doc! { "_id": id_object };
             let maybe_account = db.accounts.find_one(filter, None).await.unwrap();
 
-            maybe_account.map(Json)
+            ReadAccountResponse::Success(Json(maybe_account.unwrap()))
         }
     }
+}
+
+#[derive(Responder)]
+enum UpdateAccountResponse {
+    #[response(status = 200, content_type = "application/json")]
+    Success(Json<Account>),
+    #[response(status = 400)]
+    InvalidRequest(Json<ErrorResponse>),
+    #[response(status = 404)]
+    NotFound(Json<ErrorResponse>),
 }
 
 #[put("/account/<id>", data = "<json_account>")]
@@ -48,17 +81,23 @@ async fn update_account(
     id: &str,
     json_account: Json<UpdateAccount>,
     db: &State<Database>,
-) -> Option<Json<Account>> {
+) -> UpdateAccountResponse {
     let id_object_result = ObjectId::from_str(id);
 
     let account = json_account.into_inner();
 
     if account.id.is_some() {
-        return None;
+        return UpdateAccountResponse::InvalidRequest(Json(ErrorResponse {
+            error_code: "INVALID_REQUEST".to_string(),
+            message: "The ID cannot be provided".to_string(),
+        }));
     }
 
     match id_object_result {
-        Err(_) => None,
+        Err(_) => UpdateAccountResponse::NotFound(Json(ErrorResponse {
+            error_code: "NOT_FOUND".to_string(),
+            message: "The requested account could not be found".to_string(),
+        })),
         Ok(id_object) => {
             let filter = doc! { "_id": id_object };
 
@@ -70,7 +109,12 @@ async fn update_account(
                     .unwrap();
             }
 
-            read_account(id, db).await
+            let read_response = read_account(id, db).await;
+
+            match read_response {
+                ReadAccountResponse::Success(acc) => UpdateAccountResponse::Success(acc),
+                ReadAccountResponse::NotFound(err) => UpdateAccountResponse::NotFound(err),
+            }
         }
     }
 }
@@ -91,7 +135,6 @@ struct Database {
 
 impl Database {
     async fn init() -> Self {
-        // let uri = "mongodb://localhost:27017".to_string();
         let client = Client::with_options(
             ClientOptions::builder()
                 .retry_writes(false)
@@ -99,7 +142,6 @@ impl Database {
                 .build(),
         )
         .unwrap();
-        // let client = Client::with_uri_str(uri).await.unwrap();
         let db = client.database("Example");
 
         let accounts: Collection<Account> = db.collection("Accounts");
