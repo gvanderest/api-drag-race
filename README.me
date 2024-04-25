@@ -1,0 +1,15 @@
+# API Drag Race
+
+I'm just making some APIs for an undisclosed project and want to compare some similar workloads for the following:
+- MongoDB Database
+- CRUD Actions
+- Input validation
+
+Then compare them across a few dimensions:
+- Latency
+- Error rates
+- Throughput TPS (Might be difficult to measure locally)
+    - Write heavy - 90% write, 10% read
+    - Read heavy - 90% read, 10% write
+    - Lifecycle - Workloads of writing a record, reading it a bunch, then deleting it
+    - Random Access - Workloads of writing some records, reading random records, deleting random records
